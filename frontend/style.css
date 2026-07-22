@@ -162,7 +162,8 @@ body::before {
   border-bottom: 1px solid var(--border);
   overflow-y: auto;
 }
-.side-section:first-of-type { flex: 1 1 auto; min-height: 0; }
+/* Sections that share the leftover vertical space and scroll internally. */
+.side-section.grow { flex: 1 1 auto; min-height: 0; }
 
 .side-label {
   display: flex;
@@ -278,6 +279,89 @@ body::before {
 }
 .side-action:hover { color: var(--text); border-color: var(--border-2); }
 .side-action.danger:hover { color: var(--error); border-color: var(--error); background: var(--error-soft); }
+/* "New chat" is the one affirmative action in the sidebar, so it carries the accent. */
+.side-action.primary { margin-top: 0; color: var(--accent); border-color: var(--accent-line); }
+.side-action.primary:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+
+/* Conversation list — same row grammar as .doc-row so the two panels read alike. */
+.conv-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.conv-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 9px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.conv-row:hover { border-color: var(--border-2); }
+.conv-row.active { border-color: var(--accent-line); background: var(--accent-soft); }
+.conv-row.active .conv-title { color: var(--accent); }
+.conv-title {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.conv-time {
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  color: var(--text-mute);
+  white-space: nowrap;
+}
+/* Same affordance as the per-document delete. */
+.conv-del {
+  border: none;
+  background: transparent;
+  color: var(--text-mute);
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+}
+.conv-del:hover { color: var(--error); background: var(--error-soft); }
+.conv-del:disabled { opacity: 0.4; cursor: progress; }
+
+/* Language mode picker — styled as a sibling of .side-kv, not a browser default. */
+.side-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  margin-bottom: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.side-field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.side-field-key {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-mute);
+}
+.side-select {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  cursor: pointer;
+  appearance: none;
+}
+.side-select:focus { outline: none; }
+/* The dropdown list itself is OS-rendered, so set a readable pairing explicitly. */
+.side-select option { background: var(--panel); color: var(--text); }
+.side-field.manual { border-color: var(--accent-line); }
+.side-field.manual .side-select { color: var(--accent); }
 
 /* Language key/value */
 .side-kv {

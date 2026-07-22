@@ -83,6 +83,53 @@ FORMAL_MARKERS = {
 
 _TOKEN_RE = re.compile(r"[\w']+", re.UNICODE)
 
+# Language combinations a user may pick manually, overriding detection.
+#
+# This is a WHITELIST, not a suggestion list, and it is load-bearing for safety:
+# prompts._describe_languages() falls back to the raw code for anything not in
+# LANGUAGE_NAMES, so an unvalidated override string would be attacker-supplied text
+# inside the system prompt.
+#
+# The combinations mirror what the detector itself can actually produce:
+#   - script pass  -> te, hi, and en only ever alongside te/hi
+#   - LLM/heuristic -> en, te-rom, hi-rom, and the "+ en" pairs
+# Nothing here is invented; every entry is a real possible detection outcome.
+VALID_OVERRIDES: dict[str, list[str]] = {
+    "en": ["en"],
+    "te": ["te"],
+    "hi": ["hi"],
+    "te-rom": ["te-rom"],
+    "hi-rom": ["hi-rom"],
+    "te-rom|en": ["te-rom", "en"],
+    "hi-rom|en": ["hi-rom", "en"],
+    "te|en": ["te", "en"],
+    "hi|en": ["hi", "en"],
+}
+
+
+def detection_from_override(override: str, text: str) -> DetectionResult | None:
+    """Build a detection result from an explicit user choice.
+
+    Returns None for anything not in VALID_OVERRIDES, so the caller falls back to
+    normal detection rather than trusting client input.
+
+    Register is still detected from the text: the override is about *language*, and
+    tone is orthogonal — someone writing formally in Telugu should not be flattened
+    just because they pinned the language.
+    """
+    codes = VALID_OVERRIDES.get((override or "").strip())
+    if not codes:
+        return None
+
+    return DetectionResult(
+        languages=list(codes),
+        code_mixed=len(codes) > 1,
+        register=detect_register(text),
+        method="manual",
+        confidence=1.0,
+        script_counts=detect_scripts(text),
+    )
+
 
 @dataclass
 class DetectionResult:

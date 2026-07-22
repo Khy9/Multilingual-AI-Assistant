@@ -37,7 +37,15 @@ const els = {
 
   langPair: document.getElementById('langPair'),
   langProfile: document.getElementById('langProfile'),
+  langSelect: document.getElementById('langSelect'),
+  langField: document.querySelector('.side-field'),
+  langNote: document.getElementById('langNote'),
   cacheStat: document.getElementById('cacheStat'),
+
+  convList: document.getElementById('convList'),
+  convEmpty: document.getElementById('convEmpty'),
+  convCount: document.getElementById('convCount'),
+  newChatBtn: document.getElementById('newChatBtn'),
 
   langBadge: document.getElementById('langBadge'),
   docBadge: document.getElementById('docBadge'),
@@ -70,6 +78,19 @@ let busy = false;
 /* Last detection result, used to pick a TTS voice matching the reply language. */
 let lastDetection = null;
 
+/* --- Conversation state ----------------------------------------------------
+ * The id is generated here rather than fetched, the same way USER_ID is, so a new
+ * chat is usable immediately. The backend creates the row lazily on the first
+ * successful message — which is why `conversationSaved` matters: until it flips,
+ * there is no row to PATCH a language change onto. */
+const newConversationId = () => 'c_' + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+
+let conversationId = newConversationId();
+let conversationSaved = false;
+/* null = auto-detect. Otherwise a key from the server's whitelist. Held per
+ * conversation, so switching chats switches language mode with it. */
+let languageOverride = null;
+
 /* --- UI helpers ----------------------------------------------------------- */
 
 function setStatus(text, kind = '') {
@@ -85,6 +106,28 @@ function setStatus(text, kind = '') {
 function clearWelcome() {
   const welcome = els.messages.querySelector('.welcome');
   if (welcome) welcome.remove();
+}
+
+/* Replaces the transcript with an empty-state panel. Built as nodes rather than an
+ * HTML string so conversation titles can never be injected into markup. */
+function showWelcome(heading, body) {
+  els.messages.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'welcome';
+
+  const glyph = document.createElement('div');
+  glyph.className = 'welcome-glyph';
+  glyph.setAttribute('aria-hidden', 'true');
+  glyph.textContent = '◈';
+
+  const title = document.createElement('h2');
+  title.textContent = heading;
+
+  const text = document.createElement('p');
+  text.textContent = body;
+
+  wrap.append(glyph, title, text);
+  els.messages.appendChild(wrap);
 }
 
 function addMessage(role, text = '') {
@@ -282,6 +325,160 @@ async function clearAllDocs() {
   }
 }
 
+/* --- Conversations -------------------------------------------------------- */
+
+/* SQLite hands back "YYYY-MM-DD HH:MM:SS" in UTC with no zone marker, which JS
+ * would otherwise parse as local time and show hours out. */
+function parseUtc(stamp) {
+  return new Date(String(stamp || '').replace(' ', 'T') + 'Z');
+}
+
+function relativeTime(stamp) {
+  const then = parseUtc(stamp);
+  if (Number.isNaN(then.getTime())) return '';
+  const seconds = Math.max(0, (Date.now() - then.getTime()) / 1000);
+  if (seconds < 60) return 'now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d`;
+  return then.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+async function refreshConversations() {
+  try {
+    const response = await fetch(`/chat/conversations?user_id=${encodeURIComponent(USER_ID)}`);
+    const data = await response.json();
+    renderConvList(data.conversations || []);
+  } catch {
+    /* The conversation panel is navigational; a failure must not break the chat. */
+  }
+}
+
+function renderConvList(items) {
+  els.convList.innerHTML = '';
+  els.convCount.textContent = String(items.length);
+  els.convEmpty.hidden = items.length > 0;
+
+  for (const item of items) {
+    const li = document.createElement('li');
+    li.className = 'conv-row' + (item.conversation_id === conversationId ? ' active' : '');
+    li.tabIndex = 0;
+    li.setAttribute('role', 'button');
+
+    const title = document.createElement('span');
+    title.className = 'conv-title';
+    title.textContent = item.title;
+    title.title = `${item.title} · ${item.message_count} messages`;
+
+    const time = document.createElement('span');
+    time.className = 'conv-time';
+    time.textContent = relativeTime(item.updated_at);
+
+    const del = document.createElement('button');
+    del.className = 'conv-del';
+    del.type = 'button';
+    del.textContent = '✕';
+    del.title = `Delete "${item.title}"`;
+    del.setAttribute('aria-label', del.title);
+    del.addEventListener('click', (event) => {
+      // Without this the row's own click handler would also load the chat.
+      event.stopPropagation();
+      deleteConversation(item.conversation_id, item.title, del);
+    });
+
+    const open = () => loadConversation(item.conversation_id);
+    li.addEventListener('click', open);
+    li.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        open();
+      }
+    });
+
+    li.append(title, time, del);
+    els.convList.appendChild(li);
+  }
+}
+
+/* Rebuilds the transcript of a saved conversation. Replayed assistant turns get
+ * the same per-message play button as live ones; the conversation's own language
+ * mode is passed through so an old Telugu chat still reads in a Telugu voice. */
+function renderLoadedMessages(messages, override) {
+  els.messages.innerHTML = '';
+  const detection = override && LANGUAGE_CODES[override]
+    ? { languages: LANGUAGE_CODES[override] }
+    : null;
+
+  for (const message of messages) {
+    const role = message.role === 'user' ? 'user' : 'assistant';
+    const { wrap } = addMessage(role, message.content);
+    if (role === 'assistant') addMeta(wrap, [], [], detection);
+  }
+  if (!messages.length) showWelcome('Conversation cleared.',
+    'Your uploaded documents and remembered language preference are still active.');
+}
+
+async function loadConversation(id) {
+  if (busy) {
+    setStatus('Wait for the current reply to finish before switching chats.', 'error');
+    return;
+  }
+  try {
+    const response = await fetch(
+      `/chat/conversations/${encodeURIComponent(id)}?user_id=${encodeURIComponent(USER_ID)}`);
+    if (!response.ok) throw new Error(`Could not open that conversation (${response.status})`);
+    const data = await response.json();
+
+    stopSpeaking();
+    conversationId = data.conversation_id;
+    conversationSaved = true;
+    // Restore the language mode this conversation was using, not the one the
+    // session happens to be on.
+    applyLanguageOverride(data.language_override || null, { persist: false });
+
+    history = data.messages.map((m) => ({ role: m.role, content: m.content }));
+    renderLoadedMessages(data.messages, data.language_override || null);
+
+    setStatus('');
+    refreshConversations();
+    closeDrawer();
+  } catch (error) {
+    setStatus(error.message, 'error');
+  }
+}
+
+function newChat() {
+  stopSpeaking();
+  conversationId = newConversationId();
+  conversationSaved = false;
+  history = [];
+  // A new chat starts on the default mode rather than inheriting the last one.
+  applyLanguageOverride(null, { persist: false });
+  showWelcome('New chat.', 'Ask anything, in whichever language you think in. Your other conversations are saved in the sidebar.');
+  setStatus('');
+  refreshConversations();
+  closeDrawer();
+  els.input.focus();
+}
+
+async function deleteConversation(id, title, button) {
+  if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
+  button.disabled = true;
+  try {
+    const response = await fetch(
+      `/chat/conversations/${encodeURIComponent(id)}?user_id=${encodeURIComponent(USER_ID)}`,
+      { method: 'DELETE' });
+    if (!response.ok) throw new Error(`Delete failed (${response.status})`);
+    setStatus(`Deleted "${title}".`, 'ok');
+    // Deleting the chat you are reading leaves you on a fresh one.
+    if (id === conversationId) newChat();
+    else refreshConversations();
+  } catch (error) {
+    button.disabled = false;
+    setStatus(error.message, 'error');
+  }
+}
+
 async function refreshCacheStat() {
   try {
     const response = await fetch('/chat/cache/stats');
@@ -313,7 +510,13 @@ async function sendMessage(text) {
     const response = await fetch('/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, history: history.slice(0, -1), user_id: USER_ID }),
+      body: JSON.stringify({
+        message: text,
+        history: history.slice(0, -1),
+        user_id: USER_ID,
+        conversation_id: conversationId,
+        language_override: languageOverride,
+      }),
     });
 
     if (!response.ok || !response.body) {
@@ -362,6 +565,8 @@ async function sendMessage(text) {
           metaChips = [{ text: `${payload.detection.label} · ${payload.detection.register}` }];
           if (payload.detection.code_mixed) metaChips.push({ text: 'code-mixed' });
           if (payload.detection.method === 'llm') metaChips.push({ text: 'LLM-classified' });
+          // Makes it visible that this reply bypassed detection entirely.
+          if (payload.detection.method === 'manual') metaChips.push({ text: 'manual' });
           if (payload.cache_hit) {
             metaChips.push({ kind: 'cache', text: `cached (${payload.cache_similarity} similar)` });
           }
@@ -395,6 +600,10 @@ async function sendMessage(text) {
     if (speakEnabled) speak(full, { languages: lastDetection?.languages, button: playButton });
     // A cache write may have happened server-side; keep the counter fresh.
     refreshCacheStat();
+    // The server persists the turn before sending `done`, so by now the row
+    // exists — which is what makes a later language change PATCH-able.
+    conversationSaved = true;
+    refreshConversations();
   }
 }
 
@@ -616,6 +825,60 @@ function updateLangPair(text) {
   els.langProfile.classList.add('active');
 }
 
+/* --- Manual language override --------------------------------------------- */
+
+/* value -> code array, filled from /chat/languages. Used to give a loaded
+ * conversation's TTS the right voice without re-deriving the mapping here. */
+const LANGUAGE_CODES = {};
+
+async function loadLanguageOptions() {
+  try {
+    const response = await fetch('/chat/languages');
+    const data = await response.json();
+    for (const option of data.options || []) {
+      LANGUAGE_CODES[option.value] = option.codes;
+      const element = document.createElement('option');
+      element.value = option.value;
+      element.textContent = option.label;
+      els.langSelect.appendChild(element);
+    }
+  } catch {
+    /* Leaves just "Auto-detect", which is exactly today's behaviour. */
+  }
+}
+
+/* Single place that moves the override between the control, the request payload
+ * and the server, so the three cannot disagree. */
+function applyLanguageOverride(value, { persist = true } = {}) {
+  languageOverride = value || null;
+  els.langSelect.value = languageOverride || '';
+  els.langField.classList.toggle('manual', Boolean(languageOverride));
+
+  if (languageOverride) {
+    const label = els.langSelect.selectedOptions[0]?.textContent || languageOverride;
+    updateLangPair(`${label} · manual`);
+    els.langNote.textContent =
+      'Detection is off for this chat — replies use the language you picked. The setting is saved with this conversation.';
+  } else {
+    els.langPair.textContent = '—';
+    els.langProfile.classList.remove('active');
+    els.langNote.textContent =
+      'Code-mixed input is detected automatically; your usual pair is remembered across sessions.';
+  }
+
+  // A chat with no messages has no row yet, so there is nothing to PATCH; the
+  // value rides along with its first message instead.
+  if (persist && conversationSaved) {
+    fetch(`/chat/conversations/${encodeURIComponent(conversationId)}?user_id=${encodeURIComponent(USER_ID)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ language_override: languageOverride }),
+    }).catch(() => {});
+  }
+}
+
+els.langSelect.addEventListener('change', () => applyLanguageOverride(els.langSelect.value));
+
 /* --- Sidebar drawer (mobile) ---------------------------------------------- */
 
 function openDrawer() {
@@ -696,16 +959,33 @@ els.dropzone.addEventListener('keydown', (e) => {
 
 els.clearDocsBtn.addEventListener('click', clearAllDocs);
 
-els.clearChatBtn.addEventListener('click', () => {
+els.newChatBtn.addEventListener('click', newChat);
+
+/* Empties the conversation you have open. Deliberately NOT a delete: the chat
+ * stays in the sidebar and keeps its language mode. Removing one entirely is the
+ * ✕ on its row. */
+els.clearChatBtn.addEventListener('click', async () => {
+  if (!confirm('Clear the messages in this chat? Your other conversations are not affected.')) return;
+
   // Otherwise playback continues against buttons that are about to be detached.
   stopSpeaking();
   history = [];
-  els.messages.innerHTML =
-    '<div class="welcome"><div class="welcome-glyph" aria-hidden="true">◈</div>' +
-    '<h2>Conversation cleared.</h2>' +
-    '<p>Your uploaded documents and remembered language preference are still active.</p></div>';
+  showWelcome('Chat cleared.',
+    'This conversation is empty but still saved. Your documents, language setting and other conversations are untouched.');
   setStatus('');
   closeDrawer();
+
+  if (conversationSaved) {
+    try {
+      const response = await fetch(
+        `/chat/conversations/${encodeURIComponent(conversationId)}/messages?user_id=${encodeURIComponent(USER_ID)}`,
+        { method: 'DELETE' });
+      if (!response.ok && response.status !== 404) throw new Error(`Clear failed (${response.status})`);
+      refreshConversations();
+    } catch (error) {
+      setStatus(error.message, 'error');
+    }
+  }
 });
 
 document.addEventListener('click', (event) => {
@@ -728,6 +1008,8 @@ if (location.protocol === 'file:') {
 } else {
   refreshDocs();
   refreshCacheStat();
+  loadLanguageOptions();
+  refreshConversations();
 
   fetch(`/chat/profile?user_id=${encodeURIComponent(USER_ID)}`)
     .then((r) => r.json())

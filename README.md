@@ -246,12 +246,39 @@ Errors are delivered as SSE frames, not HTTP error codes. Once a `200` and the s
 you cannot go back and change the status, so a mid-stream rate limit arrives as
 `event: error` with `kind: "rate_limit"`.
 
-### 2.6 Persistent memory
+### 2.6 Manual language override
+
+`app/services/lang_detect.py` → `app/routers/chat.py`
+
+Detection is good, not infallible, so the sidebar has a language picker. "Auto-detect" is the
+default and is exactly the behavior described above; picking anything else pins the language for
+that conversation and skips detection entirely — including the stage-2 LLM call, so an overridden
+turn costs one fewer Gemini request.
+
+The options are not free text. `VALID_OVERRIDES` whitelists the nine combinations the detector can
+actually produce (`en`, `te`, `hi`, `te-rom`, `hi-rom`, and the four `+ English` pairs), and the UI
+builds its dropdown from `GET /chat/languages` so the list cannot drift from what the server
+accepts. That whitelist is load-bearing rather than cosmetic: `prompts._describe_languages()` falls
+back to the raw code for anything it does not recognise, so an unvalidated override string would be
+client-controlled text inside the system prompt. Unknown values are logged and ignored, falling
+back to auto-detect.
+
+Two deliberate limits on what an override changes:
+
+- **Register is still detected from the text.** The override is about language; formality is
+  orthogonal, and someone writing politely in pinned Telugu should not be flattened.
+- **Overridden turns do not update the user profile.** The profile means "what this user actually
+  writes in", inferred from observed text. Folding an explicit pick into it would let one
+  conversation's setting bias auto-detection everywhere else.
+
+### 2.7 Persistent memory and saved conversations
 
 `app/services/memory.py`
 
-A stdlib `sqlite3` table (`user_profile`) keyed by a browser-generated `user_id` stored in
-`localStorage` — cross-session memory without accounts or a login flow.
+One stdlib `sqlite3` file holds two things, both keyed by a browser-generated `user_id` stored in
+`localStorage` — no accounts, no login flow.
+
+**`user_profile`** — cross-session language memory.
 
 Each turn folds into rolling `Counter`s of observed languages and registers. `get_profile()`
 returns the two most-used language codes as `preferred_languages`.
@@ -262,7 +289,31 @@ below 0.7 — a tie-break for a short ambiguous message like "ok" or "thanks", n
 positive evidence in the text. If you write in Telugu, you get Telugu, regardless of history.
 Memory failures are logged and swallowed; a chat is never failed over a nice-to-have.
 
-### 2.7 Voice input and output
+**`conversation` / `conversation_message`** — saved chats, so history survives a refresh and the
+sidebar can switch between past conversations.
+
+- The `conversation_id` is generated **client-side**, like `user_id`, so a new chat is usable with
+  no round-trip. The row is created **lazily** on the first successful turn, which means a chat you
+  opened but never used leaves nothing behind.
+- Turns are persisted after the reply completes, on both the live and cache-replay paths, and never
+  on an error path — a failed turn would otherwise leave an orphan user message the client does not
+  have.
+- Titles are the first user message truncated to 60 characters on a word boundary. No LLM call: it
+  would add latency and quota cost to every new conversation for a cosmetic string. Scripts without
+  spaces (Telugu, Devanagari) fall through to a hard cut.
+- **The language override lives on the conversation row, not the session.** That is what makes the
+  two features compose: opening an old chat restores its language mode along with its messages, so
+  a conversation you pinned to Tenglish stays Tenglish even if the session has since moved to
+  auto-detect.
+- "Clear this chat" empties one conversation but keeps it (and its language mode), resetting the
+  title so the next message re-titles it. Deleting is the ✕ on its row — a separate, confirmed
+  action.
+
+Every conversation route is scoped by `user_id`. That is **not** authentication — `user_id` is a
+client-supplied value and anyone can send any id — it only stops one browser's list from showing
+another's. See §9.
+
+### 2.8 Voice input and output
 
 `frontend/script.js`
 
@@ -375,14 +426,15 @@ multilingual-ai-assistant/
 │   │   │   └── config.py         Pydantic settings, .env loading, path resolution,
 │   │   │                         cache threshold + calibration data
 │   │   ├── routers/
-│   │   │   ├── chat.py           POST /chat/stream (SSE), profile + cache endpoints
+│   │   │   ├── chat.py           POST /chat/stream (SSE), conversations, languages,
+│   │   │   │                     profile + cache endpoints
 │   │   │   └── documents.py      upload, status, delete-one, clear-all
 │   │   └── services/
 │   │       ├── lang_detect.py    two-stage detector + register detection
 │   │       ├── rag.py            extract → chunk → embed → Chroma → retrieve
 │   │       ├── prompts.py        system prompt assembly + few-shot register examples
 │   │       ├── cache.py          semantic cache (cosine, scoped, JSON-persisted)
-│   │       ├── memory.py         sqlite3 user profiles
+│   │       ├── memory.py         sqlite3 user profiles + saved conversations
 │   │       └── llm.py            ONLY module importing the Gemini SDK
 │   ├── tests/
 │   │   ├── test_lang_detect.py   prints detection for 6 representative inputs
@@ -510,7 +562,13 @@ Generated from the live OpenAPI schema at `/openapi.json`.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/chat/stream` | Chat, streamed as SSE. Body: `{message, history[], user_id, use_rag, use_cache}`. Frames: `meta` → `token`* → `done` \| `error` |
+| `POST` | `/chat/stream` | Chat, streamed as SSE. Body: `{message, history[], user_id, conversation_id, language_override, use_rag, use_cache}`. Frames: `meta` → `token`* → `done` \| `error` |
+| `GET` | `/chat/languages` | The nine pinnable language modes; the UI's dropdown is built from this |
+| `GET` | `/chat/conversations?user_id=` | Saved chats: id, title, updated_at, message_count, language_override |
+| `GET` | `/chat/conversations/{id}?user_id=` | One conversation's full history + its language mode |
+| `PATCH` | `/chat/conversations/{id}?user_id=` | Set `language_override` without sending a message. `400` on an unknown option; `404` if the chat has no messages yet |
+| `DELETE` | `/chat/conversations/{id}/messages?user_id=` | Empty a conversation, keep it ("Clear this chat") |
+| `DELETE` | `/chat/conversations/{id}?user_id=` | Delete a conversation and its messages |
 | `GET` | `/chat/profile?user_id=` | Remembered language pair and message count for a returning user |
 | `DELETE` | `/chat/profile?user_id=` | Forget a user's profile |
 | `GET` | `/chat/cache/stats` | Cache entry counts (`total`, `plain`, `rag`) |
@@ -596,9 +654,17 @@ The offline heuristic exists as a fallback, but it is a keyword matcher and less
 
 **No OCR.** Scanned or image-only PDFs yield no text and are rejected explicitly.
 
-**Conversation history is client-side only.** The browser holds it and posts the last 10 turns with
-each request. It is not persisted server-side, so a page refresh loses the conversation — uploaded
-documents and the language profile survive, since those live server-side.
+**Conversations are readable by anyone who guesses a `user_id`.** Every conversation route is
+scoped by `user_id`, but that value is generated by the browser and trusted as sent — there is no
+auth. Saved chats are stored in plain text in SQLite. Fine for a local project; do not expose this
+publicly with real content in it.
+
+**A refresh opens a new chat rather than resuming the last one.** History is persisted and
+reachable from the sidebar, but the app does not remember which conversation you had open.
+
+**Prompt context is still the client's last 10 turns.** Saving history did not change what gets
+sent to the model: the browser posts `history[-10:]` with each request. A conversation loaded from
+the sidebar therefore carries its full transcript into the prompt only up to that window.
 
 **Register detection is lexical.** A keyword-and-punctuation heuristic, not a model. Sarcasm,
 mixed signals, and formality carried by grammar rather than vocabulary will be misread.

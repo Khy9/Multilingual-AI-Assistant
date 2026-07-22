@@ -27,8 +27,21 @@
         <button id="sidebarClose" class="icon-btn drawer-only" type="button" title="Close panel" aria-label="Close panel">✕</button>
       </div>
 
+      <!-- Conversations -->
+      <section class="side-section grow">
+        <div class="side-label">
+          <span>Conversations</span>
+          <span id="convCount" class="side-count">0</span>
+        </div>
+
+        <button id="newChatBtn" class="side-action primary" type="button">+ New chat</button>
+
+        <ul id="convList" class="conv-list" aria-label="Saved conversations"></ul>
+        <p id="convEmpty" class="side-empty">No saved conversations yet.</p>
+      </section>
+
       <!-- Documents -->
-      <section class="side-section">
+      <section class="side-section grow">
         <div class="side-label">
           <span>Documents</span>
           <span id="docCount" class="side-count">0</span>
@@ -52,16 +65,27 @@
       <!-- Language profile -->
       <section class="side-section">
         <div class="side-label"><span>Language</span></div>
+
+        <label class="side-field" for="langSelect">
+          <!-- No key label here: the section header already says "Language", and
+               the pair names need the full width to avoid clipping. -->
+          <!-- Options are populated from /chat/languages so the list can never
+               drift from the whitelist the server validates against. -->
+          <select id="langSelect" class="side-select">
+            <option value="">Auto-detect</option>
+          </select>
+        </label>
+
         <div id="langProfile" class="side-kv">
           <span class="kv-key">detected</span>
           <span id="langPair" class="kv-val">—</span>
         </div>
-        <p class="side-note">Code-mixed input is detected automatically; your usual pair is remembered across sessions.</p>
+        <p id="langNote" class="side-note">Code-mixed input is detected automatically; your usual pair is remembered across sessions.</p>
       </section>
 
       <!-- Session footer -->
       <div class="sidebar-foot">
-        <button id="clearChatBtn" class="side-action" type="button">Clear conversation</button>
+        <button id="clearChatBtn" class="side-action" type="button" title="Empties the conversation you have open; other conversations are untouched">Clear this chat</button>
         <div class="side-stat"><span>cache</span><span id="cacheStat" class="mono-dim">—</span></div>
       </div>
     </aside>
