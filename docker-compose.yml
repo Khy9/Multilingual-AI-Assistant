@@ -1,0 +1,38 @@
+# Local containerised run.
+#   docker compose up --build
+#
+# Requires .env to exist in this directory (copy it from .env.example first).
+
+services:
+  backend:
+    build:
+      # Context is the project root, because the image needs BOTH backend/ (the
+      # API) and frontend/ (served as static files by the same process).
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: multilingual-ai-assistant
+
+    ports:
+      - "8000:8000"
+
+    # Secrets are injected at runtime and never baked into the image.
+    env_file:
+      - .env
+
+    volumes:
+      # Persists the Chroma vector store, the semantic cache and the user-memory
+      # SQLite DB across container restarts and rebuilds.
+      - assistant-data:/app/data
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  assistant-data:

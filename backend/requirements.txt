@@ -1,0 +1,25 @@
+# NOTE: requires Python 3.11 or 3.12.
+# ChromaDB and its onnxruntime/pypika dependencies have no Python 3.14 wheels.
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# Config / env loading
+# pydantic is pinned explicitly: without an upper bound, pip's resolver can pick a
+# pre-release (2.14.0a1), which makes the build non-reproducible.
+pydantic>=2.10,<2.14
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+
+# LLM provider (current Google Gen AI SDK — NOT the retired google-generativeai)
+google-genai==1.2.0
+
+# Vector store for RAG
+chromadb==0.6.3
+
+# PDF text extraction for document upload
+pypdf==5.1.0
+
+# Cosine similarity for the semantic cache
+numpy==2.2.1

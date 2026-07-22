@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Multilingual AI Assistant</title>
+  <!-- Relative, not root-absolute: a root-absolute "/style.css" resolves to the
+       drive root when index.html is opened straight off disk (file://), so the
+       page renders completely unstyled. Relative works both there and under the
+       StaticFiles mount, which serves this file at "/". -->
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🗣️</text></svg>" />
+</head>
+<body>
+  <div class="app" id="app">
+
+    <!-- Backdrop shown behind the sidebar drawer on narrow viewports. -->
+    <div class="scrim" id="scrim" hidden></div>
+
+    <!-- ===================== SIDEBAR ===================== -->
+    <aside class="sidebar" id="sidebar" aria-label="Documents and settings">
+      <div class="sidebar-head">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">◈</span>
+          <span class="brand-name">multilingual<span class="brand-dim">/assistant</span></span>
+        </div>
+        <button id="sidebarClose" class="icon-btn drawer-only" type="button" title="Close panel" aria-label="Close panel">✕</button>
+      </div>
+
+      <!-- Documents -->
+      <section class="side-section">
+        <div class="side-label">
+          <span>Documents</span>
+          <span id="docCount" class="side-count">0</span>
+        </div>
+
+        <label class="dropzone" id="dropzone" for="fileInput" tabindex="0">
+          <input type="file" id="fileInput" accept=".txt,.md,.pdf,.csv,.json" hidden />
+          <span class="dropzone-icon" aria-hidden="true">↑</span>
+          <span class="dropzone-text">Drop a file or <u>browse</u></span>
+          <span class="dropzone-hint">.txt .md .pdf .csv .json · 5MB max</span>
+        </label>
+
+        <ul id="docList" class="doc-list" aria-live="polite"></ul>
+        <p id="docEmpty" class="side-empty">No documents indexed yet.</p>
+
+        <button id="clearDocsBtn" class="side-action danger" type="button" hidden>
+          Clear all documents
+        </button>
+      </section>
+
+      <!-- Language profile -->
+      <section class="side-section">
+        <div class="side-label"><span>Language</span></div>
+        <div id="langProfile" class="side-kv">
+          <span class="kv-key">detected</span>
+          <span id="langPair" class="kv-val">—</span>
+        </div>
+        <p class="side-note">Code-mixed input is detected automatically; your usual pair is remembered across sessions.</p>
+      </section>
+
+      <!-- Session footer -->
+      <div class="sidebar-foot">
+        <button id="clearChatBtn" class="side-action" type="button">Clear conversation</button>
+        <div class="side-stat"><span>cache</span><span id="cacheStat" class="mono-dim">—</span></div>
+      </div>
+    </aside>
+
+    <!-- ===================== MAIN ===================== -->
+    <div class="main">
+
+      <header class="topbar">
+        <button id="sidebarToggle" class="icon-btn drawer-only" type="button" title="Open panel" aria-label="Open panel">☰</button>
+        <div class="topbar-title">
+          <span class="mono-dim">~/</span>chat
+        </div>
+        <div class="topbar-badges">
+          <span id="langBadge" class="badge" title="Detected language of your last message">
+            <span class="badge-key">lang</span><span class="badge-val">—</span>
+          </span>
+          <span id="docBadge" class="badge" title="Documents currently loaded for retrieval">
+            <span class="badge-key">docs</span><span class="badge-val">0 · 0 chunks</span>
+          </span>
+        </div>
+      </header>
+
+      <main id="messages" class="messages" aria-live="polite">
+        <div class="welcome">
+          <div class="welcome-glyph" aria-hidden="true">◈</div>
+          <h2>Ask me anything, in whichever language you think in.</h2>
+          <p>I detect code-mixed input, keep your tone, and answer questions about documents you upload — even when the document is in a different language from your question.</p>
+          <div class="examples">
+            <button class="example-btn" type="button">Naaku ee document lo revenue figures kavali, cheppandi</button>
+            <button class="example-btn" type="button">Aapko ye report kaise chahiye, PDF format mein bhejun kya?</button>
+            <button class="example-btn" type="button">ఈ డాక్యుమెంట్‌లో ముఖ్యమైన విషయాలు ఏమిటి?</button>
+            <button class="example-btn" type="button">Summarise the key points of the uploaded document.</button>
+          </div>
+        </div>
+      </main>
+
+      <div id="statusBar" class="status-bar" hidden></div>
+
+      <footer class="composer">
+        <form id="chatForm" class="composer-row">
+          <button id="micBtn" class="tool-btn" type="button" title="Speak your message" aria-label="Speak your message" hidden>🎤</button>
+          <textarea id="input" rows="1" placeholder="Type in English, Telugu, Hindi, Tenglish or Hinglish…" autocomplete="off"></textarea>
+          <button id="speakBtn" class="tool-btn" type="button" title="Read replies aloud" aria-label="Read replies aloud" aria-pressed="false" hidden>🔊</button>
+          <button id="sendBtn" type="submit" class="send-btn">Send<span class="send-caret" aria-hidden="true">▸</span></button>
+        </form>
+      </footer>
+
+    </div>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>

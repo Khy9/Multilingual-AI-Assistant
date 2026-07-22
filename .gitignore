@@ -1,0 +1,37 @@
+# --- Secrets: never commit these ---
+.env
+.env.local
+*.env
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# --- Node (not used, but the course template expects it) ---
+node_modules/
+
+# --- Local persistence: vector store, cache, session/profile DBs ---
+data/
+.chroma/
+chroma/
+*.db
+*.sqlite
+*.sqlite3
+semantic_cache.json
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

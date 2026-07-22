@@ -1,0 +1,169 @@
+# Deploying to AWS App Runner
+
+App Runner builds and runs a container from your `Dockerfile`, gives you an HTTPS URL, and handles
+scaling. It suits this project because the single container serves both the API and the UI.
+
+> **Verification note:** the Docker build was not executed on the machine this project was built on
+> (Docker was not installed there). Build the image locally with `docker compose up --build` before
+> pushing, so you find any build problem on your laptop instead of in a cloud build log.
+
+---
+
+## Step 0 — Set up budget alerts BEFORE you deploy
+
+Do this first. App Runner is **not** free — it bills for provisioned container memory even while
+idle, and a service left running for a month is the classic way a student project turns into a
+surprise bill.
+
+1. AWS Console → **Billing and Cost Management** → **Budgets** → **Create budget**.
+2. Choose **Zero spend budget** (alerts on the first cent) or a **Cost budget** with a monthly cap
+   of a few dollars.
+3. Add your email as an alert recipient. Set thresholds at 50%, 80% and 100% of the cap.
+4. Also enable **Billing** → **Billing preferences** → *Receive Free Tier Usage Alerts*.
+
+Budget alerts are informational — **they do not stop spending.** When you are done demoing, run
+`aws apprunner delete-service` or delete the service in the console. Pausing still bills for
+provisioned memory.
+
+Separately, remember the Gemini side: keep billing **disabled** on the Google Cloud project your
+API key belongs to, or you silently leave the Gemini free tier. See README.md.
+
+---
+
+## Step 1 — Push the code to GitHub
+
+App Runner's source-based deployment reads the repository directly.
+
+```bash
+cd multilingual-ai-assistant
+git init
+git add .
+git commit -m "Multilingual AI assistant"
+git branch -M main
+git remote add origin https://github.com/<you>/multilingual-ai-assistant.git
+git push -u origin main
+```
+
+**Before pushing, confirm no key is committed:**
+
+```bash
+git ls-files | xargs grep -l "AIza" || echo "No API keys in tracked files."
+git ls-files | grep -x "backend/.env" && echo "STOP: .env is tracked!" || echo ".env is not tracked."
+```
+
+`.env` is listed in `.gitignore`, but check anyway — if it was ever committed, removing it from the
+working tree does not remove it from history, and you must rotate the key.
+
+---
+
+## Step 2 — Create the App Runner service
+
+1. AWS Console → **App Runner** → **Create service**.
+2. **Source**: *Source code repository* → connect GitHub → pick your repo and the `main` branch.
+   Set **Deployment trigger** to *Manual* (automatic redeploys on every push cost money).
+3. **Build settings**: choose **Use a configuration file** and let it read `apprunner.yaml`
+   (below), or configure manually:
+   - Runtime: **Docker**
+   - Dockerfile path: `backend/Dockerfile`
+   - Docker build context: `.` (the repository root — the image needs both `backend/` and
+     `frontend/`)
+4. **Service settings**:
+   - Port: **8000**
+   - CPU / Memory: **0.25 vCPU / 0.5 GB** — the smallest option, and enough here.
+   - Health check path: `/health`
+5. **Environment variables** — see the next step.
+6. Create, and wait for the build (first one takes several minutes).
+
+### Optional `apprunner.yaml`
+
+Place at the repository root:
+
+```yaml
+version: 1.0
+runtime: docker
+build:
+  commands:
+    build:
+      - echo "Building container"
+run:
+  command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+  network:
+    port: 8000
+  # NOTE: no secrets here. This file is committed to git.
+```
+
+---
+
+## Step 3 — Environment variables (this is the important part)
+
+**`GEMINI_API_KEY` is set in App Runner's configuration, never in the image.** Nothing in
+`backend/Dockerfile` copies a `.env` file or bakes a key into a layer — a key baked into an image is
+readable by anyone who can pull it, and `docker history` will show it even if a later layer deletes
+the file.
+
+In **Service settings → Environment variables**:
+
+| Key | Value | Notes |
+|---|---|---|
+| `GEMINI_API_KEY` | *your key* | Prefer a Secrets Manager reference (below) over a plaintext value |
+| `GEMINI_MODEL` | `gemini-2.5-flash-lite` | Plaintext is fine — not a secret |
+| `EMBED_MODEL` | `gemini-embedding-001` | Plaintext is fine |
+
+`pydantic-settings` reads these from the process environment exactly as it reads a local `.env`, so
+no code changes are needed between local and deployed runs.
+
+### Better: store the key in Secrets Manager
+
+```bash
+aws secretsmanager create-secret \
+  --name multilingual-assistant/gemini-api-key \
+  --secret-string "YOUR_KEY_HERE"
+```
+
+Then in App Runner add the environment variable with source **Secrets Manager**, referencing that
+secret's ARN, and grant the service's instance role `secretsmanager:GetSecretValue` on it. The key
+is then never visible in the App Runner console, and rotating it does not require a redeploy.
+
+---
+
+## Step 4 — Verify the deployment
+
+```bash
+curl https://<your-service>.awsapprunner.com/health
+# {"status":"ok","llm_configured":true,...}
+```
+
+`llm_configured: true` confirms the key reached the container. If it is `false`, the environment
+variable did not apply — check for a typo in the variable name and redeploy.
+
+Then open the URL in a browser and send a message. **Streaming is the thing to check in
+production**: some proxies buffer responses, which would deliver the whole reply at once. The app
+sends `X-Accel-Buffering: no` and `Cache-Control: no-cache` to prevent this. If replies appear all
+at once, buffering is the cause.
+
+---
+
+## Persistence caveat
+
+App Runner instances have **ephemeral storage**. The `data/` directory — Chroma vectors, semantic
+cache, user memory — is wiped on every redeploy and every scale-in. Uploaded documents do not
+survive.
+
+For a demo that is fine, and worth stating in your writeup. To make it durable you would move the
+vector store to a hosted service (Chroma Cloud, Pinecone, or pgvector on RDS) and the cache to
+ElastiCache — both are single-module swaps, as described in ARCHITECTURE.md.
+
+---
+
+## Cost control checklist
+
+- [ ] Budget alert created **before** deploying
+- [ ] Smallest instance size (0.25 vCPU / 0.5 GB)
+- [ ] Auto-deploy on push disabled
+- [ ] Billing **disabled** on the Google Cloud project holding the Gemini key
+- [ ] **Service deleted when the demo is over** — this is the one that actually saves money
+
+```bash
+aws apprunner list-services
+aws apprunner delete-service --service-arn <arn>
+```
