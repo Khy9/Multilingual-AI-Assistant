@@ -40,6 +40,7 @@ const els = {
   langSelect: document.getElementById('langSelect'),
   langField: document.querySelector('.side-field'),
   langNote: document.getElementById('langNote'),
+  langSummary: document.getElementById('langSummary'),
   cacheStat: document.getElementById('cacheStat'),
 
   convList: document.getElementById('convList'),
@@ -561,6 +562,7 @@ async function sendMessage(text) {
           badgeVal(els.langBadge).textContent = payload.detection.label;
           els.langBadge.classList.add('active');
           updateLangPair(`${payload.detection.label} · ${payload.detection.register}`);
+          setLangSummary(payload.detection.languages);
 
           metaChips = [{ text: `${payload.detection.label} · ${payload.detection.register}` }];
           if (payload.detection.code_mixed) metaChips.push({ text: 'code-mixed' });
@@ -825,6 +827,18 @@ function updateLangPair(text) {
   els.langProfile.classList.add('active');
 }
 
+/* Badge on the collapsed Language header, so the active mode is readable without
+ * expanding. Codes rather than full names ("te-rom + en", not "Telugu (romanized)
+ * + English") because the row is narrow. */
+function setLangSummary(codes) {
+  const list = (codes || []).filter(Boolean);
+  els.langSummary.textContent = list.length ? list.join(' + ') : 'auto';
+  els.langSummary.title = languageOverride
+    ? 'Language pinned manually for this conversation'
+    : 'Detected automatically';
+  els.langSummary.classList.toggle('manual', Boolean(languageOverride));
+}
+
 /* --- Manual language override --------------------------------------------- */
 
 /* value -> code array, filled from /chat/languages. Used to give a loaded
@@ -859,11 +873,14 @@ function applyLanguageOverride(value, { persist = true } = {}) {
     updateLangPair(`${label} · manual`);
     els.langNote.textContent =
       'Detection is off for this chat — replies use the language you picked. The setting is saved with this conversation.';
+    setLangSummary(LANGUAGE_CODES[languageOverride] || [languageOverride]);
   } else {
     els.langPair.textContent = '—';
     els.langProfile.classList.remove('active');
     els.langNote.textContent =
       'Code-mixed input is detected automatically; your usual pair is remembered across sessions.';
+    // Back to auto: the badge resets until the next reply reports a detection.
+    setLangSummary(null);
   }
 
   // A chat with no messages has no row yet, so there is nothing to PATCH; the
@@ -878,6 +895,39 @@ function applyLanguageOverride(value, { persist = true } = {}) {
 }
 
 els.langSelect.addEventListener('change', () => applyLanguageOverride(els.langSelect.value));
+
+/* --- Collapsible sidebar sections ------------------------------------------
+ * <details> handles opening and closing itself; this only remembers which were
+ * open. Persisted rather than session-scoped because it costs the same and
+ * surviving a reload is the friendlier default. Absent state = collapsed, which
+ * keeps the sidebar to three compact rows on first load. */
+
+const PANEL_STATE_KEY = 'maa_panels_open';
+
+function initCollapsibles() {
+  let open = [];
+  try {
+    open = JSON.parse(localStorage.getItem(PANEL_STATE_KEY) || '[]');
+  } catch {
+    open = [];
+  }
+
+  for (const panel of document.querySelectorAll('.side-collapse')) {
+    panel.open = open.includes(panel.id);
+    panel.addEventListener('toggle', () => {
+      const ids = [...document.querySelectorAll('.side-collapse')]
+        .filter((element) => element.open)
+        .map((element) => element.id);
+      try {
+        localStorage.setItem(PANEL_STATE_KEY, JSON.stringify(ids));
+      } catch {
+        /* Private-mode storage failures must not break the panel. */
+      }
+    });
+  }
+}
+
+initCollapsibles();
 
 /* --- Sidebar drawer (mobile) ---------------------------------------------- */
 

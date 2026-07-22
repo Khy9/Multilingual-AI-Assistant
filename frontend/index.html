@@ -40,48 +40,63 @@
         <p id="convEmpty" class="side-empty">No saved conversations yet.</p>
       </section>
 
-      <!-- Documents -->
-      <section class="side-section grow">
-        <div class="side-label">
+      <!-- Documents — collapsible. <details> rather than a hand-rolled toggle: the
+           open/closed state, keyboard operation and screen-reader announcement all
+           come for free, and the chevron reuses the same rotation the citation
+           blocks already use. Collapsed by default; the count in the header means
+           nothing is lost while closed. -->
+      <details class="side-section side-collapse" id="docsSection">
+        <summary class="side-label side-summary">
+          <span class="side-chevron" aria-hidden="true">▸</span>
           <span>Documents</span>
           <span id="docCount" class="side-count">0</span>
+        </summary>
+
+        <div class="side-collapse-body">
+          <label class="dropzone" id="dropzone" for="fileInput" tabindex="0">
+            <input type="file" id="fileInput" accept=".txt,.md,.pdf,.csv,.json" hidden />
+            <span class="dropzone-icon" aria-hidden="true">↑</span>
+            <span class="dropzone-text">Drop a file or <u>browse</u></span>
+            <span class="dropzone-hint">.txt .md .pdf .csv .json · 5MB max</span>
+          </label>
+
+          <ul id="docList" class="doc-list" aria-live="polite"></ul>
+          <p id="docEmpty" class="side-empty">No documents indexed yet.</p>
+
+          <button id="clearDocsBtn" class="side-action danger" type="button" hidden>
+            Clear all documents
+          </button>
         </div>
+      </details>
 
-        <label class="dropzone" id="dropzone" for="fileInput" tabindex="0">
-          <input type="file" id="fileInput" accept=".txt,.md,.pdf,.csv,.json" hidden />
-          <span class="dropzone-icon" aria-hidden="true">↑</span>
-          <span class="dropzone-text">Drop a file or <u>browse</u></span>
-          <span class="dropzone-hint">.txt .md .pdf .csv .json · 5MB max</span>
-        </label>
+      <!-- Language profile — collapsible. The header badge carries the active mode
+           (compact codes, e.g. "te-rom + en") so the current setting is readable
+           without expanding. -->
+      <details class="side-section side-collapse" id="langSection">
+        <summary class="side-label side-summary">
+          <span class="side-chevron" aria-hidden="true">▸</span>
+          <span>Language</span>
+          <span id="langSummary" class="side-count">auto</span>
+        </summary>
 
-        <ul id="docList" class="doc-list" aria-live="polite"></ul>
-        <p id="docEmpty" class="side-empty">No documents indexed yet.</p>
+        <div class="side-collapse-body">
+          <label class="side-field" for="langSelect">
+            <!-- No key label here: the section header already says "Language", and
+                 the pair names need the full width to avoid clipping. -->
+            <!-- Options are populated from /chat/languages so the list can never
+                 drift from the whitelist the server validates against. -->
+            <select id="langSelect" class="side-select">
+              <option value="">Auto-detect</option>
+            </select>
+          </label>
 
-        <button id="clearDocsBtn" class="side-action danger" type="button" hidden>
-          Clear all documents
-        </button>
-      </section>
-
-      <!-- Language profile -->
-      <section class="side-section">
-        <div class="side-label"><span>Language</span></div>
-
-        <label class="side-field" for="langSelect">
-          <!-- No key label here: the section header already says "Language", and
-               the pair names need the full width to avoid clipping. -->
-          <!-- Options are populated from /chat/languages so the list can never
-               drift from the whitelist the server validates against. -->
-          <select id="langSelect" class="side-select">
-            <option value="">Auto-detect</option>
-          </select>
-        </label>
-
-        <div id="langProfile" class="side-kv">
-          <span class="kv-key">detected</span>
-          <span id="langPair" class="kv-val">—</span>
+          <div id="langProfile" class="side-kv">
+            <span class="kv-key">detected</span>
+            <span id="langPair" class="kv-val">—</span>
+          </div>
+          <p id="langNote" class="side-note">Code-mixed input is detected automatically; your usual pair is remembered across sessions.</p>
         </div>
-        <p id="langNote" class="side-note">Code-mixed input is detected automatically; your usual pair is remembered across sessions.</p>
-      </section>
+      </details>
 
       <!-- Session footer -->
       <div class="sidebar-foot">

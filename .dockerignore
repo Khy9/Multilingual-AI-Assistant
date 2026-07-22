@@ -1,0 +1,47 @@
+# Keep the Docker build context small and secret-free.
+#
+# The build context is the PROJECT ROOT (see docker-compose.yml — the image needs
+# both backend/ and frontend/), so without this file `docker build` ships ~370MB,
+# almost all of it a Windows virtualenv that is useless inside a Linux image.
+#
+# The Dockerfile copies four explicit paths rather than `COPY . .`, so nothing
+# secret reaches an image layer today. This file is the second line of defence:
+# if that ever changes, .env still cannot get in.
+
+# --- Secrets: must never enter an image layer ---
+.env
+.env.local
+*.env
+!.env.example
+
+# --- Virtualenvs: platform-specific and huge (345MB) ---
+backend/venv/
+backend/.venv/
+venv/
+.venv/
+
+# --- Local persistence: rebuilt at runtime, and App Runner storage is ephemeral ---
+backend/data/
+data/
+*.sqlite3
+*.db
+semantic_cache.json
+
+# --- Python build noise ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# --- VCS and editors ---
+.git/
+.gitignore
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Docs: not needed at runtime, and they invalidate the layer cache on edit ---
+*.md
+!README.md

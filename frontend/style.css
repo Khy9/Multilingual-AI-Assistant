@@ -183,6 +183,61 @@ body::before {
   border: 1px solid var(--border-2);
   border-radius: 999px;
   color: var(--text-dim);
+  /* Pushed to the right edge of a summary row, which uses gap rather than
+     space-between so the chevron and label stay together on the left. */
+  margin-left: auto;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Language codes are conventionally lowercase, so opt out of the uppercasing the
+   surrounding .side-label applies — "te-rom + en", not "TE-ROM + EN". */
+#langSummary { text-transform: none; }
+/* A pinned language reads as accented here, matching the picker inside. */
+.side-count.manual { color: var(--accent); border-color: var(--accent-line); }
+
+/* --- Collapsible sections ---------------------------------------------------
+   Native <details>, so there is no toggle logic to write and no aria-expanded to
+   keep in sync — script.js only remembers the state. */
+.side-collapse {
+  padding: 0;          /* padding moves onto the summary and body */
+  overflow: visible;   /* the body does its own scrolling */
+}
+.side-summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px 16px;
+  margin: 0;           /* .side-label's bottom margin would gap the closed row */
+  cursor: pointer;
+  list-style: none;    /* hides the default disclosure triangle */
+  transition: color 0.15s;
+}
+.side-summary::-webkit-details-marker { display: none; }
+.side-summary:hover { color: var(--text-dim); }
+.side-summary:focus-visible {
+  outline: none;
+  color: var(--text-dim);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+/* Same glyph and timing as the citation blocks under each reply. */
+.side-chevron {
+  color: var(--accent);
+  transition: transform 0.15s;
+  display: inline-block;
+  line-height: 1;
+}
+.side-collapse[open] .side-chevron { transform: rotate(90deg); }
+.side-collapse[open] .side-summary { color: var(--text-dim); }
+
+.side-collapse-body {
+  padding: 0 16px 16px;
+  /* A long document list scrolls inside its own section rather than pushing the
+     rest of the sidebar into an outer scrollbar. */
+  max-height: 38vh;
+  overflow-y: auto;
 }
 
 /* Dropzone / upload */
@@ -751,6 +806,12 @@ body::before {
   .messages { padding: 18px 16px; }
   .msg { max-width: 92%; }
   .topbar-title { display: none; }
+
+  /* 16px exactly, not 0.94rem (=14.6px): iOS Safari auto-zooms the page when a
+     focused input is under 16px, and does not zoom back out afterwards. The
+     select gets the same treatment for the same reason. */
+  #input,
+  .side-select { font-size: 16px; }
 }
 
 @media (max-width: 460px) {

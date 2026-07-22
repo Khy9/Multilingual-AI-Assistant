@@ -443,7 +443,8 @@ multilingual-ai-assistant/
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── frontend/
-│   ├── index.html                sidebar + chat shell
+│   ├── index.html                chat shell + sidebar (Conversations always open;
+│   │                             Documents and Language are <details> accordions)
 │   ├── style.css                 dark terminal-adjacent theme, single accent
 │   └── script.js                 SSE parsing, upload, voice, drawer
 ├── sample_docs/                  two unrelated docs for testing retrieval
