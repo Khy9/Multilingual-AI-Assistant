@@ -1,8 +1,14 @@
 # Multilingual AI Assistant
 
-A retrieval-augmented chat assistant built for the way people in Hyderabad actually type: Telugu,
-Hindi and English mixed inside a single sentence, with the regional language usually written in
-Latin script — "Tenglish" and "Hinglish".
+**A document-grounded chat assistant that understands code-mixed Indian languages — Telugu, Hindi
+and English interleaved inside a single sentence, with the regional language typed in Latin
+script.**
+
+Ask a question in romanized Telugu about a document written in English, and get an answer back in
+romanized Telugu, at your own level of formality. The hardest part is not the chat: it is that
+**romanized Telugu contains no Telugu characters**, so every standard language detector sees plain
+Latin text and confidently returns the wrong answer. This project solves that with a two-stage
+detector, and does its cross-language retrieval with **no translation step at all**.
 
 ```
 Naaku ee document lo revenue figures kavali, cheppandi
@@ -10,8 +16,60 @@ Aapko ye report kaise chahiye, PDF format mein bhejun kya?
 ఈ report లో ఏముంది cheppandi
 ```
 
-Every one of those sentences breaks a standard NLP pipeline. This project is an attempt to handle
-them properly rather than to wrap a translation API.
+Every one of those sentences breaks a standard NLP pipeline. This project handles them properly
+rather than wrapping a translation API.
+
+---
+
+## At a glance
+
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-async%20%2B%20SSE-009688?logo=fastapi&logoColor=white)
+![Gemini](https://img.shields.io/badge/Google-Gemini-4285F4?logo=google&logoColor=white)
+![ChromaDB](https://img.shields.io/badge/ChromaDB-vector%20store-FF6B6B)
+![SQLite](https://img.shields.io/badge/SQLite-memory-003B57?logo=sqlite&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-verified-2496ED?logo=docker&logoColor=white)
+![JavaScript](https://img.shields.io/badge/Frontend-vanilla%20JS-F7DF1E?logo=javascript&logoColor=black)
+
+> **Live demo:** `[TODO: add AWS App Runner URL once deployed]`
+> Until then, see [§6 Setup](#6-setup-and-running) — `docker compose up --build` is a one-liner.
+
+|  |  |
+|---|---|
+| **What it is** | RAG chat assistant for code-mixed Telugu/Hindi/English, with cross-language document retrieval |
+| **The hard problem** | Romanized regional languages are invisible to script-based and statistical language detectors |
+| **How it's solved** | Two-stage detection: free offline Unicode pass, then an LLM classifier only for all-Latin text, with an offline keyword fallback |
+| **Standout piece** | Cross-language retrieval with **no translation hop** — a multilingual embedding model puts a Telugu query and an English document in one shared vector space |
+| **Cost engineering** | Semantic cache keyed on *meaning*, threshold calibrated against measured embedding pairs (§2.4); runs entirely on Gemini's free tier |
+| **Scale** | 6 backend service modules, 16 API endpoints, one container serving both API and UI |
+| **Run it** | `docker compose up --build` → <http://127.0.0.1:8000> |
+
+---
+
+## Contents
+
+| § | Section | What's in it |
+|---|---|---|
+| 1 | [What this is, and why a normal chatbot doesn't solve it](#1-what-this-is-and-why-a-normal-chatbot-doesnt-solve-it) | The three simultaneous failures of off-the-shelf tooling |
+| 2 | [How it actually works](#2-how-it-actually-works) | **The technical core** — detection, RAG, prompts, cache, SSE, memory, voice |
+| 2.1 | [Two-stage language detection](#21-two-stage-language-detection) | Why script analysis is free and an LLM is only needed sometimes |
+| 2.2 | [The RAG pipeline](#22-the-rag-pipeline-end-to-end) | Cross-language retrieval without translation |
+| 2.3 | [Register and tone preservation](#23-register-and-tone-preservation) | Few-shot prompting, and the bias it introduced |
+| 2.4 | [Semantic cache](#24-semantic-cache) | **Threshold calibrated from measured data**, with the trade-off stated |
+| 2.5 | [Streaming (SSE)](#25-streaming-sse) | Token-by-token, and why not `EventSource` |
+| 2.6 | [Manual language override](#26-manual-language-override) | Whitelisting as prompt-injection defence |
+| 2.7 | [Persistent memory](#27-persistent-memory-and-saved-conversations) | Cross-session profiles, used narrowly on purpose |
+| 2.8 | [Voice input and output](#28-voice-input-and-output) | Feature detection over broken buttons |
+| 3 | [Request flow](#3-request-flow-what-happens-when-you-press-send) | One trace, keystroke to streamed reply |
+| 4 | [Tech stack, and why](#4-tech-stack-and-why) | Every dependency justified |
+| 5 | [Project structure](#5-project-structure) | Module map and one-way dependency direction |
+| 6 | [Setup and running](#6-setup-and-running) | Local and Docker, plus free-tier billing warnings |
+| 7 | [API reference](#7-api-reference) | 16 endpoints, generated from the live OpenAPI schema |
+| 8 | [What's verified, and what isn't](#8-whats-verified-and-what-isnt) | Evidence table — including what is **not** tested |
+| 9 | [Engineering notes: two bugs worth reading](#9-engineering-notes-two-bugs-worth-reading) | Prompt-engineering debugging, and a dependency time bomb |
+| 10 | [Known limitations](#10-known-limitations) | The honest list |
+
+**Short on time?** §2.1, §2.4 and §9 are the parts that show the most engineering judgment.
 
 ---
 
@@ -340,7 +398,7 @@ sidebar can switch between past conversations.
 
 Every conversation route is scoped by `user_id`. That is **not** authentication — `user_id` is a
 client-supplied value and anyone can send any id — it only stops one browser's list from showing
-another's. See §9.
+another's. See §10.
 
 ### 2.8 Voice input and output
 
@@ -404,6 +462,7 @@ chat.py :: _event_stream()
                     │   base rules + few-shot register examples
                     │   + detected language/register lines
                     │   + document excerpts (if any)
+                    │   + monolingual-English rule, LAST (pure "en" only — §2.3)
                     ▼
                  llm.stream_chat() ──► Gemini generate_content_stream
                     │
@@ -461,7 +520,8 @@ multilingual-ai-assistant/
 │   │   └── services/
 │   │       ├── lang_detect.py    two-stage detector + register detection
 │   │       ├── rag.py            extract → chunk → embed → Chroma → retrieve
-│   │       ├── prompts.py        system prompt assembly + few-shot register examples
+│   │       ├── prompts.py        system prompt assembly, few-shot register examples,
+│   │       │                     monolingual-English rule (§9.1)
 │   │       ├── cache.py          semantic cache (cosine, scoped, JSON-persisted)
 │   │       ├── memory.py         sqlite3 user profiles + saved conversations
 │   │       └── llm.py            ONLY module importing the Gemini SDK
@@ -490,6 +550,16 @@ rewriting that one file.
 ---
 
 ## 6. Setup and running
+
+### Live application
+
+> **`[TODO: add AWS App Runner URL once deployed]`**
+>
+> Deployment steps are in **[DEPLOY.md](DEPLOY.md)** — read Step 0 (budget alerts) first: App
+> Runner bills for provisioned container memory even while idle, so it is not free the way the
+> Gemini tier is. Once deployed, paste the URL here and in the **At a glance** block at the top.
+
+Until then it runs locally in one command — see [Docker](#docker) below.
 
 ### Python version
 
@@ -627,7 +697,7 @@ text, `413` too large, `429` rate limited, `503` no API key, `502` other provide
 ## 8. What's verified, and what isn't
 
 Measured on this build against the live Gemini API. This table is deliberately not padded — see
-section 9 for the other side.
+§10 for the other side, and §9 for two bugs this process caught.
 
 | Check | Status | Evidence |
 |---|---|---|
@@ -674,7 +744,83 @@ python tests/test_streaming.py       # needs the server running
 
 ---
 
-## 9. Known limitations
+## 9. Engineering notes: two bugs worth reading
+
+Both were found by running the thing rather than by reading it, and both have a root cause that is
+more interesting than the fix. Kept here because the diagnosis is the transferable part.
+
+### 9.1 `[FIXED]` Casual English replies leaked Telugu and Hindi
+
+**Symptom.** A user typing plain English casually got Tenglish back. Reproduced 3 times out of 3:
+
+```
+in:   "hey whats the dating policy here"
+out:  "Arrey, policy document lo dating gurinchi em mention cheyyaledu yaar."
+```
+
+Detection was not at fault — it correctly reported `["en"]`, `code_mixed: false`. The prompt was.
+
+**Root cause.** Two independent axes had been collapsed into one. Every few-shot register example
+in `prompts.py` contains Telugu or Hindi, necessarily, since register is hardest to preserve across
+a language boundary. So every example of *casual* the model saw was also *code-mixed*, and it
+generalized the wrong invariant: that casual **means** code-mixing. It doesn't — casual English is
+contractions and slang.
+
+The prompt-assembly code made this worse by being asymmetric. There was an explicit
+`if detection.code_mixed:` block reinforcing mixing, and **no branch at all** for the monolingual
+case. Code-mixing was reinforced twice; pure English was argued for zero times.
+
+**Fix.** A `MONOLINGUAL_ENGLISH_RULE` block, appended only when detection is exactly `["en"]` and
+not code-mixed. It names the specific words that leak, defines what casual English looks like
+instead, and tells the model in as many words that the examples above govern tone, not language.
+
+Two decisions in it are worth more than the text itself:
+
+- **Position is load-bearing.** The rule is appended *last* — after the examples *and* after the
+  retrieved document context. Placed earlier, the Tenglish examples are the last thing the model
+  reads about language and they win; with RAG on, a long context block buries it just as
+  effectively. Recency is doing real work, so the code carries a comment saying not to tidy it into
+  the base instructions.
+- **The gate is deliberately strict**, requiring both `languages == ["en"]` and `not code_mixed`. A
+  detector returning `["en", "te-rom"]` with `code_mixed` false must not trigger an English-only
+  rule and suppress mixing the user actually wanted.
+
+**Verification.** 0/4 leaks after, down from 3/3, while staying casual (*"Hey! Honestly, there's no
+mention of a dating policy at all."*). Tenglish, Hinglish, Telugu-script and formal-English paths
+re-tested and unchanged. Plus 8 deterministic assertions on prompt assembly — because the
+behavioural runs are sampled LLM output, which can show a fix works but cannot show a rule fires in
+exactly the right cases and never in the wrong ones.
+
+### 9.2 `[FIXED]` An unpinned transitive dependency broke a build that never changed
+
+**Symptom.** Every ChromaDB operation logged an error, on a first-ever Docker build of code that
+had not changed:
+
+```
+ERROR chromadb.telemetry.product.posthog: Failed to send telemetry event
+ClientStartEvent: capture() takes 1 positional argument but 3 were given
+```
+
+**Root cause.** `chromadb==0.6.3` requires `posthog>=2.4.0` with **no upper bound**. A fresh build
+resolves posthog 7.x, whose `capture()` takes one positional argument; chromadb calls it with
+three. The pinned code was correct when written and rotted because an unpinned *transitive*
+dependency moved underneath it.
+
+The interesting part is why the obvious fix fails. `services/rag.py` already sets
+`ANONYMIZED_TELEMETRY=False`, and that setting is read correctly — but chromadb implements the
+opt-out by setting posthog's module-level `disabled` flag, which posthog 7.x no longer honours. So
+`capture()` is still called and still raises. No configuration change could fix it.
+
+**Fix.** Pin `posthog>=3.0,<4.0`, mirroring the reasoning already applied to `pydantic` in the same
+file. Logs went from three errors per operation to clean.
+
+**Why it was worth fixing at all**, given chromadb catches the exception and nothing breaks: the
+errors fired on every Chroma operation, and log noise that is *known* to be harmless is exactly
+what a real error hides inside.
+
+---
+
+## 10. Known limitations
 
 **Cross-language paraphrases miss the cache.** By design, explained in §2.4: the same question in
 Telugu and English scores 0.808, below the 0.88 threshold, so it costs a second generation. The
@@ -697,10 +843,11 @@ The offline heuristic exists as a fallback, but it is a keyword matcher and less
 
 **No OCR.** Scanned or image-only PDFs yield no text and are rejected explicitly.
 
-**Conversations are readable by anyone who guesses a `user_id`.** Every conversation route is
-scoped by `user_id`, but that value is generated by the browser and trusted as sent — there is no
-auth. Saved chats are stored in plain text in SQLite. Fine for a local project; do not expose this
-publicly with real content in it.
+**No authentication; conversations are readable by anyone who guesses a `user_id`.** Every
+conversation route is scoped by `user_id`, but that value is a `localStorage` string generated by
+the browser and trusted as sent — anyone can pass any id. Scoping stops one browser's list from
+showing another's; it is not a security boundary. Saved chats are stored in plain text in SQLite.
+Fine for a local project; do not expose this publicly with real content in it.
 
 **A refresh opens a new chat rather than resuming the last one.** History is persisted and
 reachable from the sidebar, but the app does not remember which conversation you had open.
@@ -716,9 +863,6 @@ mixed signals, and formality carried by grammar rather than vocabulary will be m
 by a thread lock. Fine for one container; two replicas would each hold their own copy. Chroma is
 embedded, and SQLite writes are serialized by one lock. Scaling means externalizing all three —
 which is why each sits behind a narrow function-level seam.
-
-**No authentication.** `user_id` is a `localStorage` value generated by the browser and trusted as
-sent. Anyone can pass any id. Fine for a local project; not something to expose publicly as-is.
 
 **Document scope is global.** All uploaded documents live in one Chroma collection shared by every
 user. There is no per-user isolation.
