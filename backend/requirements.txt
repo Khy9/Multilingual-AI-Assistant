@@ -18,6 +18,17 @@ google-genai==1.2.0
 # Vector store for RAG
 chromadb==0.6.3
 
+# Transitive dep of chromadb, pinned for the same reason pydantic is above: chromadb
+# 0.6.3 requires only `posthog>=2.4.0` (no upper bound), so a fresh build resolves to
+# posthog 7.x, whose capture() takes ONE positional arg. chromadb calls it with three
+# — posthog.capture(user_id, event_name, properties) — so every Chroma operation logs
+# "ERROR chromadb.telemetry.product.posthog: capture() takes 1 positional argument
+# but 3 were given". Harmless (Chroma catches it) but it floods the logs and would
+# hide real errors. Note the ANONYMIZED_TELEMETRY opt-out in services/rag.py does NOT
+# suppress it: chromadb disables telemetry via posthog's module-level `disabled` flag,
+# which posthog 7.x no longer honours, so capture() is still called and still raises.
+posthog>=3.0,<4.0
+
 # PDF text extraction for document upload
 pypdf==5.1.0
 

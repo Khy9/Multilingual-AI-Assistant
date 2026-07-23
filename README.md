@@ -167,6 +167,35 @@ to mirror code-mixing "in roughly the same proportion rather than collapsing int
 and to reply in the user's *script* — romanized input gets a romanized reply, never an "upgrade"
 to native script.
 
+**The few-shot examples have a side effect, and it needed a counterweight.** Every example above
+contains Telugu or Hindi, because register is hardest to preserve across a language boundary. That
+makes them a biased sample, and the bias leaked: a user typing plain English casually — *"hey whats
+the dating policy here"* — reliably got Tenglish back.
+
+```
+before:  "Arrey, policy document lo dating gurinchi em mention cheyyaledu yaar."
+after:   "Hey! Honestly, there's no mention of a dating policy at all."
+```
+
+The model had conflated two independent axes. It learned *casual* from examples that were also
+*code-mixed*, and concluded that casual **means** code-mixing. It doesn't: casual English is
+contractions and slang.
+
+So when detection returns exactly `["en"]` with `code_mixed` false, `build_system_prompt()` appends
+a `MONOLINGUAL_ENGLISH_RULE` block that names the specific words that leak (`yaar`, `ra`, `arrey`,
+`gurinchi`, `lo`, …), spells out what casual English looks like instead, and explicitly tells the
+model the examples above are about tone rather than language choice.
+
+Placement is load-bearing: the rule is appended **last**, after the few-shot examples *and* after
+the retrieved document context. Stated earlier, the Tenglish examples are the last thing the model
+reads about language and they win; with RAG on, a long context block would bury it just as
+effectively. It is the final section of the prompt no matter which optional blocks are present.
+
+The gate is deliberately strict — both `languages == ["en"]` **and** `not code_mixed`. A detector
+returning `["en", "te-rom"]` with `code_mixed` false must not trigger an English-only rule and
+suppress mixing the user actually wanted. Code-mixed, native-script and formal-English paths are
+untouched.
+
 ### 2.4 Semantic cache
 
 `app/services/cache.py`
@@ -548,12 +577,20 @@ docker compose up --build
 Open <http://127.0.0.1:8000>. Stop with `Ctrl+C` or `docker compose down`. The vector store, cache
 and user memory persist in the `assistant-data` volume; `docker compose down -v` deletes them.
 
-> **Honest caveat: the Docker path was never build-tested.** Docker was not installed on the
-> machine this was built on. `Dockerfile` and `docker-compose.yml` are written and reviewed — the
-> build context is the project root because the image needs both `backend/` and `frontend/`, the
-> paths line up with what `config.py` expects, and the container runs as a non-root user — but they
-> have **not** been built or run. The local non-Docker path *was* fully tested. Treat Docker as
-> unverified.
+The build context is the project root because the image needs both `backend/` and `frontend/`; the
+paths line up with what `config.py` expects (`FRONTEND_DIR` → `/frontend`, `data_dir` → `/app/data`,
+which is also the volume mount point); and the container runs as non-root `appuser` (uid 1000),
+which owns `/app/data` so the named volume inherits writable ownership.
+
+> **One dependency pin exists because of this path.** `requirements.txt` pins `posthog>=3.0,<4.0`.
+> `chromadb==0.6.3` requires only `posthog>=2.4.0` with no upper bound, so a fresh image resolves
+> posthog 7.x, whose `capture()` takes one positional argument where chromadb passes three. Every
+> Chroma operation then logs `ERROR chromadb.telemetry.product.posthog: capture() takes 1
+> positional argument but 3 were given`. It is harmless — chromadb catches it — but it floods the
+> logs and would bury a real error. Note that the `ANONYMIZED_TELEMETRY=False` opt-out in
+> `services/rag.py` does *not* suppress it: chromadb disables telemetry by setting posthog's
+> module-level `disabled` flag, which posthog 7.x no longer honours, so `capture()` is still called
+> and still raises. The pin is the only fix. Don't remove it as dead weight.
 
 ---
 
@@ -599,11 +636,13 @@ section 9 for the other side.
 | Cross-language retrieval, 2 documents | ✅ verified | 4/4 queries ranked the correct document first, with two unrelated docs loaded |
 | Script fidelity | ✅ verified | Telugu-script question → Telugu-script answer (574 Telugu vs 72 Latin characters) |
 | Register preservation | ✅ verified | Casual Tenglish → *"…padutundi, bro!"*; formal English → *"Sir, …"* |
+| Pure-English replies stay English | ✅ verified | *"hey whats the dating policy here"* leaked Tenglish 3/3 before the fix, 0/4 after, while staying casual ("Hey!", "honestly"). Code-mixed, Telugu-script and formal-English paths re-tested unchanged; 8/8 prompt-assembly gating cases pass |
 | Semantic cache | ✅ verified | Paraphrase hit at 0.886 (3.0s replay vs 5.7s live); a distinct question correctly missed |
 | Persistent memory | ✅ verified | Remembered language pair survived a server restart |
 | 429 handling | ✅ verified | A real 429 from Google produced a clean SSE error frame, no crash |
 | Frontend renders over HTTP | ✅ verified | Headless-browser screenshot: sidebar, theme, badges, streaming bubbles all render; assets return `200` |
-| Docker build | ⏸ **not run** | Docker was not installed on the build machine |
+| Docker build and run | ✅ verified | `docker compose up --build` succeeds; container reports healthy; `/health` returns `llm_configured: true`; UI, streaming, upload, cross-language RAG and cache all exercised in the container; logs clean |
+| Volume persistence | ✅ verified | Uploaded document (4 chunks) and cache entries survived `docker compose restart` |
 | Automated test suite | ⏸ **none** | `tests/` holds two runnable diagnostic scripts, not a pytest suite. No CI, no assertions, no coverage |
 | Load / concurrency | ⏸ **not tested** | Single-user local use only |
 | Browsers other than Chromium | ⏸ **not tested** | Voice paths especially |
@@ -642,7 +681,10 @@ Telugu and English scores 0.808, below the 0.88 threshold, so it costs a second 
 alternative — lowering the threshold — would start serving wrong answers to similar-but-different
 questions. The real fix is an LLM equivalence check on near-threshold pairs.
 
-**Docker is unverified.** Written and reviewed, never built. See §6.
+**The Docker image is only verified on linux/amd64, single-node.** It builds and runs end to end
+(§8), but it has not been tested on arm64, under App Runner's build environment, or with more than
+one container against the same volume. The `assistant-data` volume is local-disk state, so scaling
+past one instance needs an external vector store — see DEPLOY.md's persistence caveat.
 
 **Voice support is uneven and mostly out of the app's control.** Speech recognition is
 Chrome/Edge/Safari only. `te-IN` recognition is unavailable on most platforms, so the mic runs at

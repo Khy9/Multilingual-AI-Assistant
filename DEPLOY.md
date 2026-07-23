@@ -3,9 +3,10 @@
 App Runner builds and runs a container from your `Dockerfile`, gives you an HTTPS URL, and handles
 scaling. It suits this project because the single container serves both the API and the UI.
 
-> **Verification note:** the Docker build was not executed on the machine this project was built on
-> (Docker was not installed there). Build the image locally with `docker compose up --build` before
-> pushing, so you find any build problem on your laptop instead of in a cloud build log.
+> **Verification note:** the image has been built and run locally (`docker compose up --build`) and
+> verified end to end — see README §8. It has *not* been run through App Runner's own build
+> environment, which is a different base and architecture. Still build locally before pushing, so
+> you find any problem on your laptop instead of in a cloud build log.
 
 ---
 

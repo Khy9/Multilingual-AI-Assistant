@@ -34,7 +34,16 @@ Core rules:
 # Few-shot pairs showing the SAME meaning at two registers. These are what stop the
 # model flattening everything into neutral textbook prose. Also reproduced in
 # README.md as before/after documentation.
+#
+# Every example below contains Telugu or Hindi, because register is hardest to
+# preserve across a language boundary. That makes them a biased sample: they pull the
+# model toward code-mixing even when the user wrote plain English. The framing line
+# below and MONOLINGUAL_ENGLISH_RULE are the two counterweights — see that constant.
 FEW_SHOT_EXAMPLES = """Examples of register preservation (same meaning, different tone):
+
+These examples demonstrate REGISTER (how formal or casual to be). They do NOT tell you \
+which language to reply in — that is decided solely by the detected input language \
+below. Casual and code-mixed are independent: a reply can be casual in pure English.
 
 Example 1 — English -> Telugu (romanized)
   Source:  "Send me the report."
@@ -60,6 +69,43 @@ Example 4 — Formality must survive translation
   GOOD:    "Sir, please take a look at this document when you have time."
   BAD:     "See this document when free."
   Note: dropping "Sir" and the -andi ending loses the deference the speaker chose."""
+
+
+# Placed AFTER the few-shot examples and after the detection lines in the assembled
+# prompt, deliberately. Stating it earlier lets the four Tenglish/Hinglish examples be
+# the last thing the model reads about language, and they win. Recency is doing real
+# work here, so do not "tidy" this up into BASE_INSTRUCTIONS.
+MONOLINGUAL_ENGLISH_RULE = """OVERRIDING LANGUAGE RULE — THIS TAKES PRECEDENCE OVER THE EXAMPLES ABOVE:
+
+The user wrote in plain English with no code-mixing. Reply in 100% English. Every word \
+must be English.
+
+Do NOT insert Telugu or Hindi words, romanized or otherwise. Specifically, none of: \
+yaar, ra, arrey/arre, gurinchi, lo, undi/unnai, kavali, cheppu, matrame, nahi, hai, \
+kya, achha, bhai. This applies no matter how casual the conversation is.
+
+CASUAL HERE MEANS INFORMAL ENGLISH, NOT CODE-MIXING. Be relaxed the way an English \
+speaker is relaxed: contractions ("it's", "you're", "there's", "doesn't"), everyday \
+slang ("yeah", "nope", "pretty much", "a heads-up", "honestly"), short direct sentences, \
+a friendly opener like "Hey" or "Good news —". That is the correct way to sound casual \
+for this user. Reaching for "yaar" or "gurinchi" is the WRONG way, and misreads them.
+
+The register examples above happen to be written in Tenglish and Hinglish because they \
+illustrate translation across languages. They are not a licence to code-mix here. Take \
+the TONE from them and ignore their language.
+
+The only exception: you may quote a proper noun or a phrase exactly as it appears in the \
+user's message or in the document excerpts."""
+
+
+def _is_monolingual_english(detection: DetectionResult) -> bool:
+    """True when the user wrote plain English and nothing else.
+
+    Deliberately strict: both signals must agree. `code_mixed` alone is not enough,
+    because a detector that returns ["en", "te-rom"] with code_mixed=False would
+    otherwise trigger the English-only rule and suppress legitimate mixing.
+    """
+    return detection.languages == ["en"] and not detection.code_mixed
 
 
 def _describe_languages(detection: DetectionResult) -> str:
@@ -117,5 +163,14 @@ def build_system_prompt(
             "so plainly (in the user's language) instead of inventing details.\n\n"
             f"{build_context_block(chunks)}"
         )
+
+    # LAST, after the document context. Two competing pulls have to be beaten: the
+    # Tenglish few-shot examples, and — when RAG is on — a long context block that
+    # would otherwise be the most recent thing in the prompt. Appending here keeps the
+    # rule adjacent to the model's turn regardless of which optional sections are
+    # present. Mutually exclusive with the code-mixing branch above by construction:
+    # _is_monolingual_english() requires code_mixed to be False.
+    if _is_monolingual_english(detection):
+        sections.append(MONOLINGUAL_ENGLISH_RULE)
 
     return "\n\n".join(sections)
