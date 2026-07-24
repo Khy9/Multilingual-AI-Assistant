@@ -35,3 +35,6 @@ semantic_cache.json
 .idea/
 .DS_Store
 Thumbs.db
+
+# AWS Elastic Beanstalk deployment bundles
+beanstalk-*.zip
