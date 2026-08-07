@@ -884,3 +884,21 @@ user. There is no per-user isolation.
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — module map, request lifecycle, and which interfaces are
   designed to be swapped.
 - **[DEPLOY.md](DEPLOY.md)** — AWS App Runner deployment, with budget alerts set up first.
+
+
+## Key Features
+
+- 🌐 Supports Telugu, Hindi, and English code-mixed conversations
+- 📄 Document-based question answering using RAG
+- 🔍 Cross-language semantic search without translation
+- 🧠 Persistent conversation memory
+- 🎙️ Voice input and text-to-speech support
+- ⚡ Real-time streaming responses using Server-Sent Events
+- 🐳 Docker support for easy deployment
+
+## Team Members
+
+- B Sharvani
+- Khyathi M
+- N L Tejasree
+- M V S L Keerthana
